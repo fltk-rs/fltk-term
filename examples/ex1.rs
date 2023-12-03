@@ -1,5 +1,5 @@
-use fltk_term::PPTerm;
 use fltk::{prelude::*, *};
+use fltk_term::PPTerm;
 
 fn main() {
     let a = app::App::default();
@@ -8,8 +8,9 @@ fn main() {
     w.end();
     w.show();
 
-    app::add_timeout3(0.2, move |_| {
-        term.write_all(r#"echo -e "\033[1;31mHELLO""#.as_bytes()).unwrap();
+    app::add_timeout3(1., move |_| {
+        term.write_all(r#"echo -e "\033[1;31mHELLO""#.as_bytes())
+            .unwrap();
         term.write_all(b"\n").unwrap();
     });
 

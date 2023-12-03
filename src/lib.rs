@@ -1,58 +1,12 @@
-#![doc = include_str!("../README.md")]
-
-#![allow(dead_code)]
-#![allow(clippy::single_match)]
-
 use fltk::{enums::*, prelude::*, *};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::{
-    io::{self, Write},
+    env,
+    io::{self, Read, Write},
     str,
     sync::{Arc, Mutex},
+    thread,
 };
-mod pty;
-mod styles;
-mod vte_parser;
-
-const UP: &[u8] = if cfg!(not(target_os = "windows")) {
-    b"\x10"
-} else {
-    b"\x1b[A"
-};
-const DOWN: &[u8] = if cfg!(not(target_os = "windows")) {
-    b"\x0E"
-} else {
-    b"\x1b[B"
-};
-
-pub(crate) struct VteParser {
-    ch: char,
-    st: text::TextDisplay,
-    sbuf: text::TextBuffer,
-    temp_s: String,
-    temp_b: String,
-}
-
-impl VteParser {
-    pub fn new(st: text::TextDisplay, sbuf: text::TextBuffer) -> Self {
-        Self {
-            ch: 'A',
-            st,
-            sbuf,
-            temp_s: String::new(),
-            temp_b: String::new(),
-        }
-    }
-    pub fn myprint(&mut self) {
-        let mut buf = self.st.buffer().unwrap();
-        buf.append2(self.temp_s.as_bytes());
-        self.sbuf.append2(self.temp_b.as_bytes());
-        self.st.set_insert_position(buf.length());
-        self.st
-            .scroll(self.st.count_lines(0, buf.length(), true), 0);
-        self.temp_s.clear();
-        self.temp_b.clear();
-    }
-}
 
 pub fn menu_cb(m: &mut impl MenuExt) {
     let term: text::TextDisplay = app::widget_from_id("term").unwrap();
@@ -82,10 +36,9 @@ pub fn init_menu(m: &mut (impl MenuExt + 'static)) {
 
 pub struct PPTerm {
     g: group::Group,
-    st: text::TextDisplay,
-    writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
+    // st: group::experimental::Terminal,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
-
 impl Default for PPTerm {
     fn default() -> Self {
         PPTerm::new(0, 0, 0, 0, None)
@@ -95,23 +48,12 @@ impl Default for PPTerm {
 impl PPTerm {
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
         let mut g = group::Group::new(x, y, w, h, label).with_id("term_group");
-        let mut st = text::TextDisplay::default().with_id("term");
+        let mut st = group::experimental::Terminal::default().with_id("term");
         let mut m = menu::MenuButton::default()
             .with_type(menu::MenuButtonType::Popup3)
             .with_id("pop2");
         init_menu(&mut m);
         g.end();
-        st.set_cursor_color(Color::White);
-        st.show_cursor(true);
-        st.set_color(Color::Black);
-        st.set_cursor_style(text::Cursor::Block);
-        st.wrap_mode(text::WrapMode::AtBounds, 0);
-        let buf = text::TextBuffer::default();
-        st.set_buffer(buf);
-        let styles = styles::init();
-        let sbuf = text::TextBuffer::default();
-        st.set_highlight_data(sbuf.clone(), styles);
-
         g.resize_callback({
             let mut st = st.clone();
             move |_, x, y, w, h| {
@@ -119,58 +61,125 @@ impl PPTerm {
                 st.resize(x, y, w, h);
             }
         });
+        // Terminal handles many common ansi escape sequence
+        st.set_ansi(true);
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                cols: 120,
+                rows: 16,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
 
-        let performer = VteParser::new(st.clone(), sbuf);
-        let writer = pty::start(performer);
+        let mut cmd = if cfg!(target_os = "windows") {
+            env::set_var("TERM", "xterm-mono");
+            CommandBuilder::new("cmd.exe")
+        } else {
+            env::set_var("TERM", "vt100");
+            CommandBuilder::new("/bin/bash")
+        };
+        cmd.cwd(env::current_dir().unwrap());
+        cmd.env("PATH", env::var("PATH").unwrap());
 
-        if let Some(writer) = writer.as_ref() {
-            st.handle({
-                let writer = writer.clone();
-                move |t, ev| match ev {
-                    Event::KeyDown => {
-                        let key = app::event_key();
-                        match key {
-                            #[cfg(windows)]
-                            Key::BackSpace => writer.lock().unwrap().write_all(b"\x7f").unwrap(),
-                            Key::Up => writer.lock().unwrap().write_all(UP).unwrap(),
-                            Key::Down => writer.lock().unwrap().write_all(DOWN).unwrap(),
-                            // Key::Left => writer.lock().unwrap().write_all(b"\x1b[D").unwrap(),
-                            // Key::Right => writer.lock().unwrap().write_all(b"\x1b[C").unwrap(),
-                            _ => {
-                                if app::event_state() == EventState::Ctrl | EventState::Shift {
-                                    if key == Key::from_char('v') {
-                                        app::paste_text2(t);
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        let writer = Arc::new(Mutex::new(writer));
+        std::mem::forget(pair);
+
+        #[cfg(not(windows))]
+        {
+            thread::spawn({
+                let mut st = st.clone();
+                move || {
+                    let mut s = Vec::new();
+                    while child.try_wait().is_ok() {
+                        let mut msg = [0u8; 2000];
+                        if let Ok(sz) = reader.read(&mut msg) {
+                            let msg = &msg[0..sz];
+                            s.extend_from_slice(&msg[0..sz]);
+                            match str::from_utf8(&s) {
+                                Ok(text) => {
+                                    if text != "\x07" {
+                                        st.append(text);
                                     }
-                                } else {
-                                    let txt = app::event_text();
-                                    writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                                    s.clear();
+                                }
+                                Err(z) => {
+                                    let z = z.valid_up_to();
+                                    st.append_u8(&msg[0..z]);
+                                    s.extend_from_slice(&msg[z..]);
                                 }
                             }
+                            app::awake();
                         }
-                        true
+                        app::sleep(0.03);
                     }
-                    Event::Paste => {
-                        let txt = app::event_text();
-                        writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
-                        true
-                    }
-                    _ => false,
                 }
             });
         }
 
-        Self { g, st, writer }
+        #[cfg(windows)]
+        {
+            // windows quirk
+            app::sleep(0.05);
+            thread::spawn({
+                let mut st = st.clone();
+                move || {
+                    while child.try_wait().is_ok() {
+                        let mut msg = [0u8; 1024];
+                        if let Ok(sz) = reader.read(&mut msg) {
+                            let msg = &msg[0..sz];
+                            st.append2(msg);
+                        }
+                        app::sleep(0.03);
+                    }
+                }
+            });
+        }
+
+        st.handle({
+            let writer = writer.clone();
+            move |t, ev| match ev {
+                Event::Focus => true,
+                Event::KeyDown => {
+                    let key = app::event_key();
+                    if key == Key::Up {
+                        writer.lock().unwrap().write_all(b"\x10").unwrap();
+                        // t.scroll(t.count_lines(0, t.buffer().unwrap().length(), true), 0);
+                    } else if key == Key::Down {
+                        writer.lock().unwrap().write_all(b"\x0E").unwrap();
+                    } else if key == Key::from_char('v') && app::event_state() == EventState::Ctrl {
+                        app::paste(t);
+                    } else {
+                        let txt = app::event_text();
+                        writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                    }
+                    true
+                }
+                Event::KeyUp => {
+                    if app::event_key() == Key::Up {
+                        // t.scroll(t.count_lines(0, t.buffer().unwrap().length(), true), 0);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Event::Paste => {
+                    let txt = app::event_text();
+                    writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                    true
+                }
+                _ => false,
+            }
+        });
+
+        Self { g, writer }
     }
 
     pub fn write_all(&self, s: &[u8]) -> Result<(), io::Error> {
-        if let Some(writer) = &self.writer {
-            writer.lock().unwrap().write_all(s)
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Failed to write to pty!",
-            ))
-        }
+        self.writer.lock().unwrap().write_all(s)
     }
 }
 

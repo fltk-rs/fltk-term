@@ -1,6 +1,6 @@
 [package]
 name = "fltk-term"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A minimal terminal widget for fltk"
 repository = "https://github.com/fltk-rs/fltk-term"

@@ -9,10 +9,10 @@ use std::{
 };
 
 pub fn menu_cb(m: &mut impl MenuExt) {
-    let term: text::TextDisplay = app::widget_from_id("term").unwrap();
+    let term: group::experimental::Terminal = app::widget_from_id("term").unwrap();
     if let Ok(mpath) = m.item_pathname(None) {
         match mpath.as_str() {
-            "Copy\t" => app::copy2(&term.buffer().unwrap().selection_text()),
+            // "Copy\t" => app::copy2(&term.selection_text()),
             "Paste\t" => app::paste_text2(&term),
             _ => (),
         }

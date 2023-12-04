@@ -131,7 +131,7 @@ impl PPTerm {
                         let mut msg = [0u8; 1024];
                         if let Ok(sz) = reader.read(&mut msg) {
                             let msg = &msg[0..sz];
-                            st.append2(msg);
+                            st.append_u8(msg);
                         }
                         app::sleep(0.03);
                     }

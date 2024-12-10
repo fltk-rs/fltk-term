@@ -9,7 +9,7 @@ use std::{
 };
 
 pub fn menu_cb(m: &mut impl MenuExt) {
-    let term: group::experimental::Terminal = app::widget_from_id("term").unwrap();
+    let term: terminal::Terminal = app::widget_from_id("term").unwrap();
     if let Ok(mpath) = m.item_pathname(None) {
         match mpath.as_str() {
             // "Copy\t" => app::copy2(&term.selection_text()),
@@ -36,7 +36,6 @@ pub fn init_menu(m: &mut (impl MenuExt + 'static)) {
 
 pub struct PPTerm {
     g: group::Group,
-    // st: group::experimental::Terminal,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
 impl Default for PPTerm {
@@ -48,7 +47,7 @@ impl Default for PPTerm {
 impl PPTerm {
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
         let mut g = group::Group::new(x, y, w, h, label).with_id("term_group");
-        let mut st = group::experimental::Terminal::default().with_id("term");
+        let mut st = terminal::Terminal::default().with_id("term");
         let mut m = menu::MenuButton::default()
             .with_type(menu::MenuButtonType::Popup3)
             .with_id("pop2");

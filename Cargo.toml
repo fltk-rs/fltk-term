@@ -12,7 +12,9 @@ license = "MIT"
 
 [dependencies]
 portable-pty =  "0.8"
-fltk = "1.5.0"
+fltk = { version = "1.5", optional = true }
+fltk2 = { version = "0.1", optional = true }
 
 [features]
+default = ["fltk"]
 debug-term = []

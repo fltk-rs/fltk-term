@@ -8,12 +8,26 @@ use std::{
     thread,
 };
 
+fn event_text() -> Option<String> {
+    #[cfg(feature = "fltk")]
+    return Some(app::event_text());
+    #[cfg(feature = "fltk2")]
+    return app::event_text();
+}
+
+fn paste_text(wid: &impl WidgetExt) {
+    #[cfg(feature = "fltk")]
+    app::paste_text2(wid);
+    #[cfg(feature = "fltk2")]
+    app::paste_text(wid, app::CopyPasteLocation::Clipboard);
+}
+
 pub fn menu_cb(m: &mut impl MenuExt) {
     let term: terminal::Terminal = app::widget_from_id("term").unwrap();
     if let Ok(mpath) = m.item_pathname(None) {
         match mpath.as_str() {
             // "Copy\t" => app::copy2(&term.selection_text()),
-            "Paste\t" => app::paste_text2(&term),
+            "Paste\t" => paste_text(&term),
             _ => (),
         }
     }
@@ -152,8 +166,9 @@ impl PPTerm {
                     } else if key == Key::from_char('v') && app::event_state() == EventState::Ctrl {
                         app::paste(t);
                     } else {
-                        let txt = app::event_text();
-                        writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                        if let Some(txt) = event_text() {
+                            writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                        }
                     }
                     true
                 }
@@ -166,8 +181,9 @@ impl PPTerm {
                     }
                 }
                 Event::Paste => {
-                    let txt = app::event_text();
-                    writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                    if let Some(txt) = event_text() {
+                        writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                    }
                     true
                 }
                 _ => false,

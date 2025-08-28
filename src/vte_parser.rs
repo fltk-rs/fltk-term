@@ -116,14 +116,14 @@ impl Perform for super::VteParser {
             }
             9 => {
         
-                let current_col = self.temp_s.len() % 80
+                let current_col = self.temp_s.len() % 80;
                 let spaces_needed = 8 - (current_col % 8);
                 for _ in 0..spaces_needed {
                     self.temp_s.push(' ');
                     self.temp_b.push(self.ch);
                 }
             }
-            0 | 7 => ()
+            0 | 7 => (),
             _ => (),
         }
     }
@@ -583,7 +583,7 @@ impl Perform for super::VteParser {
 
         match byte {
     
-            55 => 
+            55 => {
                 let pos = self.st.insert_position();
         
                 if let Some(buf) = self.st.buffer() {
@@ -596,14 +596,14 @@ impl Perform for super::VteParser {
             }
             
     
-            56 => 
+            56 => {
                 if let Some((row, col)) = self.saved_cursor_pos {
                     self.set_cursor_position(row, col);
                 }
             }
             
     
-            99 => 
+            99 => {
         
                 if let Some(mut buf) = self.st.buffer() {
                     buf.set_text("");
@@ -623,7 +623,7 @@ impl Perform for super::VteParser {
                 self.st.set_insert_position(0);
             }
             
-            _ => {
+            _ => {}
         }
     }
 }

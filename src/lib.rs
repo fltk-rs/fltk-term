@@ -7,11 +7,17 @@ use fltk::{enums::*, prelude::*, *};
 use std::{
     io::{self, Write},
     str,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}, mpsc},
+    thread::{self, JoinHandle},
 };
+use portable_pty::MasterPty;
+mod ansi;
 mod pty;
+mod scrollback;
 mod styles;
 mod vte_parser;
+
+use scrollback::ScrollbackBuffer;
 
 const UP: &[u8] = if cfg!(not(target_os = "windows")) {
     b"\x10"
@@ -30,27 +36,50 @@ pub(crate) struct VteParser {
     sbuf: text::TextBuffer,
     temp_s: String,
     temp_b: String,
+    scrollback: Arc<Mutex<ScrollbackBuffer>>,
+    current_line: String,
+    current_styles: String,
+    ansi_state: ansi::AnsiState,
+    saved_cursor_pos: Option<(i32, i32)>,
+    terminal_rows: u16,
 }
 
 impl VteParser {
-    pub fn new(st: text::TextDisplay, sbuf: text::TextBuffer) -> Self {
+    pub fn new(st: text::TextDisplay, sbuf: text::TextBuffer, scrollback: Arc<Mutex<ScrollbackBuffer>>, terminal_rows: u16) -> Self {
+        let ansi_state = ansi::AnsiState::new();
+        let ch = ansi_state.get_style_char();
         Self {
-            ch: 'A',
+            ch,
             st,
             sbuf,
             temp_s: String::new(),
             temp_b: String::new(),
+            scrollback,
+            current_line: String::new(),
+            current_styles: String::new(),
+            ansi_state,
+            saved_cursor_pos: None,
+            terminal_rows,
         }
     }
     pub fn myprint(&mut self) {
-        let mut buf = self.st.buffer().unwrap();
-        buf.append2(self.temp_s.as_bytes());
-        self.sbuf.append2(self.temp_b.as_bytes());
-        self.st.set_insert_position(buf.length());
-        self.st
-            .scroll(self.st.count_lines(0, buf.length(), true), 0);
-        self.temp_s.clear();
-        self.temp_b.clear();
+        if let Some(mut buf) = self.st.buffer() {
+            let current_text = buf.text();
+            let current_styles = self.sbuf.text();
+            
+            let display_text = format!("{}{}", current_text, self.temp_s);
+            let display_styles = format!("{}{}", current_styles, self.temp_b);
+            
+            buf.set_text(&display_text);
+            self.sbuf.set_text(&display_styles);
+            
+            // Force the display to show all content by ensuring proper scrolling
+            self.st.set_insert_position(buf.length());
+            self.st.scroll(buf.count_lines(0, buf.length()), 0);
+            
+            self.temp_s.clear();
+            self.temp_b.clear();
+        }
     }
 }
 
@@ -84,6 +113,9 @@ pub struct PPTerm {
     g: group::Group,
     st: text::TextDisplay,
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
+    thread_handle: Option<JoinHandle<()>>,
+    master_pty: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
+    shutdown_flag: Arc<AtomicBool>,
 }
 
 impl Default for PPTerm {
@@ -120,12 +152,14 @@ impl PPTerm {
             }
         });
 
-        let performer = VteParser::new(st.clone(), sbuf);
-        let writer = pty::start(performer);
+        let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(1000)));
+        let performer = VteParser::new(st.clone(), sbuf.clone(), scrollback.clone(), 24);
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let (writer, thread_handle, master_pty) = pty::start(performer, 80, 24, shutdown_flag.clone());
 
-        if let Some(writer) = writer.as_ref() {
+        if let Some(ref writer_ref) = writer {
             st.handle({
-                let writer = writer.clone();
+                let writer = writer_ref.clone();
                 move |t, ev| match ev {
                     Event::KeyDown => {
                         let key = app::event_key();
@@ -159,7 +193,7 @@ impl PPTerm {
             });
         }
 
-        Self { g, st, writer }
+        Self { g, st, writer, thread_handle, master_pty, shutdown_flag }
     }
 
     pub fn write_all(&self, s: &[u8]) -> Result<(), io::Error> {

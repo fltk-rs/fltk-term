@@ -53,8 +53,7 @@ pub(crate) fn start(
     
     let master_pty = Arc::new(Mutex::new(pair.master));
     let writer = Arc::new(Mutex::new(writer));
-    // Note: pair.slave was consumed by spawn_command, only pair.master remains
-    // and we've moved it to master_pty, so we don't need to forget the pair
+    std::mem::forget(pair.slave);
 
     let mut statemachine = Parser::new();
 

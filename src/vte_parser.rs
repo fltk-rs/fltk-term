@@ -264,11 +264,21 @@ impl Perform for super::VteParser {
             }
             'C' => {
         
-                debug!("Cursor right - no action needed");
+                let count = if let Some(p) = params.iter().next() {
+                    p[0] as i32
+                } else {
+                    1
+                };
+                self.move_cursor_relative(0, count);
             }
             'D' => {
         
-                debug!("Cursor left - no action needed");
+                let count = if let Some(p) = params.iter().next() {
+                    p[0] as i32
+                } else {
+                    1
+                };
+                self.move_cursor_relative(0, -count);
             }
             'H' | 'f' => {
         

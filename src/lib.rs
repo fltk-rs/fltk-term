@@ -84,12 +84,17 @@ impl VteParser {
 }
 
 pub fn menu_cb(m: &mut impl MenuExt) {
-    let term: text::TextDisplay = app::widget_from_id("term").unwrap();
-    if let Ok(mpath) = m.item_pathname(None) {
-        match mpath.as_str() {
-            "Copy\t" => app::copy2(&term.buffer().unwrap().selection_text()),
-            "Paste\t" => app::paste_text2(&term),
-            _ => (),
+    if let Some(term) = app::widget_from_id::<text::TextDisplay>("term") {
+        if let Ok(mpath) = m.item_pathname(None) {
+            match mpath.as_str() {
+                "Copy\t" => {
+                    if let Some(buffer) = term.buffer() {
+                        app::copy2(&buffer.selection_text());
+                    }
+                },
+                "Paste\t" => app::paste_text2(&term),
+                _ => (),
+            }
         }
     }
 }
@@ -116,6 +121,8 @@ pub struct PPTerm {
     thread_handle: Option<JoinHandle<()>>,
     master_pty: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
     shutdown_flag: Arc<AtomicBool>,
+    cols: u16,
+    rows: u16,
 }
 
 impl Default for PPTerm {
@@ -126,8 +133,16 @@ impl Default for PPTerm {
 
 impl PPTerm {
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
+        Self::with_dimensions_and_scrollback(x, y, w, h, label, 80, 24, 1000)
+    }
+
+    pub fn with_dimensions<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L, cols: u16, rows: u16) -> Self {
+        Self::with_dimensions_and_scrollback(x, y, w, h, label, cols, rows, 1000)
+    }
+
+    pub fn with_dimensions_and_scrollback<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L, cols: u16, rows: u16, scrollback_lines: usize) -> Self {
         let mut g = group::Group::new(x, y, w, h, label).with_id("term_group");
-        let mut st = text::TextDisplay::default().with_id("term");
+        let mut st = text::TextDisplay::new(x, y, w, h, None).with_id("term");
         let mut m = menu::MenuButton::default()
             .with_type(menu::MenuButtonType::Popup3)
             .with_id("pop2");
@@ -144,18 +159,43 @@ impl PPTerm {
         let sbuf = text::TextBuffer::default();
         st.set_highlight_data(sbuf.clone(), styles);
 
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let master_pty_for_resize = Arc::new(Mutex::new(None::<Arc<Mutex<Box<dyn MasterPty + Send>>>>));
+        
         g.resize_callback({
             let mut st = st.clone();
+            let master_pty_clone = master_pty_for_resize.clone();
+            let cols = cols;
+            let rows = rows;
             move |_, x, y, w, h| {
                 m.resize(x, y, w, h);
                 st.resize(x, y, w, h);
+                
+                // Calculate new terminal dimensions based on widget size
+                let char_width = 8;
+                let char_height = 16;
+                let new_cols = ((w as f32 / char_width as f32).floor() as u16).max(10);
+                let new_rows = ((h as f32 / char_height as f32).floor() as u16).max(3);
+                
+                // Resize PTY if available
+                if let Ok(pty_option) = master_pty_clone.lock() {
+                    if let Some(ref pty) = *pty_option {
+                        let _ = pty::resize_pty(pty, new_cols, new_rows);
+                    }
+                }
             }
         });
 
-        let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(1000)));
-        let performer = VteParser::new(st.clone(), sbuf.clone(), scrollback.clone(), 24);
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let (writer, thread_handle, master_pty) = pty::start(performer, 80, 24, shutdown_flag.clone());
+        let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(scrollback_lines)));
+        let performer = VteParser::new(st.clone(), sbuf.clone(), scrollback.clone(), rows);
+        let (writer, thread_handle, master_pty) = pty::start(performer, cols, rows, shutdown_flag.clone());
+
+        // Store master_pty for resize callback
+        if let Some(ref pty) = master_pty {
+            if let Ok(mut pty_option) = master_pty_for_resize.lock() {
+                *pty_option = Some(pty.clone());
+            }
+        }
 
         if let Some(ref writer_ref) = writer {
             st.handle({
@@ -165,11 +205,32 @@ impl PPTerm {
                         let key = app::event_key();
                         match key {
                             #[cfg(windows)]
-                            Key::BackSpace => writer.lock().unwrap().write_all(b"\x7f").unwrap(),
-                            Key::Up => writer.lock().unwrap().write_all(UP).unwrap(),
-                            Key::Down => writer.lock().unwrap().write_all(DOWN).unwrap(),
-                            // Key::Left => writer.lock().unwrap().write_all(b"\x1b[D").unwrap(),
-                            // Key::Right => writer.lock().unwrap().write_all(b"\x1b[C").unwrap(),
+                            Key::BackSpace => {
+                                if let Ok(mut w) = writer.lock() {
+                                    let _ = w.write_all(b"\x7f");
+                                }
+                            },
+                            Key::Up => {
+                                if let Ok(mut w) = writer.lock() {
+                                    let _ = w.write_all(UP);
+                                }
+                            },
+                            Key::Down => {
+                                if let Ok(mut w) = writer.lock() {
+                                    let _ = w.write_all(DOWN);
+                                }
+                            },
+                            Key::Left => {
+                                // ignore for now
+                                // if let Ok(mut w) = writer.lock() {
+                                //     let _ = w.write_all(b"\x1b[D");
+                                // }
+                            },
+                            Key::Right => {
+                                if let Ok(mut w) = writer.lock() {
+                                    let _ = w.write_all(b"\x1b[C");
+                                }
+                            },
                             _ => {
                                 if app::event_state() == EventState::Ctrl | EventState::Shift {
                                     if key == Key::from_char('v') {
@@ -177,7 +238,9 @@ impl PPTerm {
                                     }
                                 } else {
                                     let txt = app::event_text();
-                                    writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                                    if let Ok(mut w) = writer.lock() {
+                                        let _ = w.write_all(txt.as_bytes());
+                                    }
                                 }
                             }
                         }
@@ -185,7 +248,9 @@ impl PPTerm {
                     }
                     Event::Paste => {
                         let txt = app::event_text();
-                        writer.lock().unwrap().write_all(txt.as_bytes()).unwrap();
+                        if let Ok(mut w) = writer.lock() {
+                            let _ = w.write_all(txt.as_bytes());
+                        }
                         true
                     }
                     _ => false,
@@ -193,17 +258,58 @@ impl PPTerm {
             });
         }
 
-        Self { g, st, writer, thread_handle, master_pty, shutdown_flag }
+        Self { g, st, writer, thread_handle, master_pty, shutdown_flag, cols, rows }
+    }
+
+    pub fn cols(&self) -> u16 {
+        self.cols
+    }
+
+    pub fn rows(&self) -> u16 {
+        self.rows
+    }
+
+    pub fn resize_terminal(&mut self, cols: u16, rows: u16) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ref pty) = self.master_pty {
+            pty::resize_pty(pty, cols, rows)?;
+            self.cols = cols;
+            self.rows = rows;
+            Ok(())
+        } else {
+            Err("No PTY available for resizing".into())
+        }
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown_flag.store(true, Ordering::Relaxed);
     }
 
     pub fn write_all(&self, s: &[u8]) -> Result<(), io::Error> {
         if let Some(writer) = &self.writer {
-            writer.lock().unwrap().write_all(s)
+            match writer.lock() {
+                Ok(mut w) => w.write_all(s),
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Failed to acquire writer lock",
+                ))
+            }
         } else {
             Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "Failed to write to pty!",
+                "No writer available",
             ))
+        }
+    }
+}
+
+impl Drop for PPTerm {
+    fn drop(&mut self) {
+        self.shutdown();
+        if let Some(handle) = self.thread_handle.take() {
+            // Use a timeout to avoid hanging on close
+            std::thread::spawn(move || {
+                let _ = handle.join();
+            });
         }
     }
 }

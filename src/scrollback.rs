@@ -43,9 +43,7 @@ impl ScrollbackBuffer {
             self.lines.pop_front();
         }
         self.lines.push_back(line);
-        
-        
-        
+
         if self.current_scroll_offset == 0 {
             
         } else {

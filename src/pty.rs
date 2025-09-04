@@ -1,17 +1,28 @@
+use crate::cell_performer::CellsPerformer;
+use crate::cells::CellBuffer;
 use fltk::app;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::env;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::thread::{self, JoinHandle};
 use vte::Parser;
 
+pub(crate) struct PtyHandles {
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    pub thread_handle: JoinHandle<()>,
+    pub master_pty: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+}
+
 pub(crate) fn start(
-    mut performer: crate::VteParser,
+    buffer: Arc<Mutex<CellBuffer>>,
     cols: u16,
     rows: u16,
     shutdown_flag: Arc<AtomicBool>,
-) -> (Option<Arc<Mutex<Box<dyn Write + Send>>>>, Option<JoinHandle<()>>, Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>) {
+) -> Option<PtyHandles> {
     let pair = match native_pty_system().openpty(PtySize {
         cols,
         rows,
@@ -19,7 +30,7 @@ pub(crate) fn start(
         pixel_height: 0,
     }) {
         Ok(pair) => pair,
-        Err(_) => return (None, None, None),
+        Err(_) => return None,
     };
 
     let mut cmd = if cfg!(target_os = "windows") {
@@ -33,24 +44,21 @@ pub(crate) fn start(
     if let Ok(path) = env::var("PATH") {
         cmd.env("PATH", path);
     }
-    
-    // Set environment variables to ensure ANSI colors work  
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
     let mut child = match pair.slave.spawn_command(cmd) {
         Ok(child) => child,
-        Err(_) => return (None, None, None),
+        Err(_) => return None,
     };
     let mut reader = match pair.master.try_clone_reader() {
         Ok(reader) => reader,
-        Err(_) => return (None, None, None),
+        Err(_) => return None,
     };
     let writer = match pair.master.take_writer() {
         Ok(writer) => writer,
-        Err(_) => return (None, None, None),
+        Err(_) => return None,
     };
-    
     let master_pty = Arc::new(Mutex::new(pair.master));
     let writer = Arc::new(Mutex::new(writer));
     std::mem::forget(pair.slave);
@@ -58,55 +66,52 @@ pub(crate) fn start(
     let mut statemachine = Parser::new();
 
     #[cfg(windows)]
-    app::sleep(0.05);
+    {
+        // Windows needs more time for PTY initialization
+        app::sleep(0.1);
+        // Flush any initial output
+        let mut temp_buf = [0u8; 1024];
+        let _ = reader.read(&mut temp_buf);
+    }
 
     let thread_handle = thread::spawn({
         move || {
             #[cfg(feature = "debug-term")]
-            eprintln!("PTY thread started - about to start reading");
-            
+            eprintln!("PTY thread (cells) started");
+
             while !shutdown_flag.load(Ordering::Relaxed) {
-                // Check if child process is still alive
                 match child.try_wait() {
-                    Ok(Some(_exit_status)) => {
-                        // Child has exited
-                        break;
-                    }
-                    Ok(None) => {
-                        // Child is still running, continue reading
-                    }
-                    Err(_) => {
-                        // Error checking child status
-                        break;
-                    }
+                    Ok(Some(_)) => break,
+                    Ok(None) => {}
+                    Err(_) => break,
                 }
 
                 let mut msg = [0u8; 4096];
                 match reader.read(&mut msg) {
-                    Ok(0) => {
-                        // EOF reached
-                        break;
-                    }
+                    Ok(0) => break,
                     Ok(sz) => {
                         let msg = &msg[0..sz];
-                        #[cfg(feature = "debug-term")]
-                        {
-                            let text_repr = String::from_utf8_lossy(msg);
-                            eprintln!("PTY read {} bytes: {:?}", sz, text_repr);
+                        if let Ok(mut buf) = buffer.lock() {
+                            let mut perf = CellsPerformer::new(&mut buf);
+                            for byte in msg {
+                                statemachine.advance(&mut perf, *byte);
+                            }
                         }
-                        for byte in msg {
-                            statemachine.advance(&mut performer, *byte);
-                        }
-                        performer.myprint();
                         app::awake();
                     }
                     Err(e) => {
-                        if e.kind() == std::io::ErrorKind::WouldBlock {
-                            // No data available right now, just continue the loop
-                            // This allows us to check the shutdown flag
-                        } else {
-                            // Real error, sleep briefly and continue
-                            app::sleep(0.01);
+                        match e.kind() {
+                            std::io::ErrorKind::WouldBlock => {
+                                app::sleep(0.01);
+                            }
+                            std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe => {
+                                break;
+                            }
+                            _ => {
+                                #[cfg(feature = "debug-term")]
+                                eprintln!("PTY read error: {}", e);
+                                app::sleep(0.01);
+                            }
                         }
                     }
                 }
@@ -114,7 +119,12 @@ pub(crate) fn start(
             }
         }
     });
-    (Some(writer), Some(thread_handle), Some(master_pty))
+
+    Some(PtyHandles {
+        writer,
+        thread_handle,
+        master_pty,
+    })
 }
 
 /// Resize the PTY to new dimensions

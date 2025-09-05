@@ -65,6 +65,7 @@ pub(crate) fn start(
 
     let mut statemachine = Parser::new();
 
+    #[cfg(windows)]
     app::sleep(0.1);
 
     let thread_handle = thread::spawn({

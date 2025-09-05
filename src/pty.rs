@@ -64,15 +64,8 @@ pub(crate) fn start(
     std::mem::forget(pair.slave);
 
     let mut statemachine = Parser::new();
-
-    #[cfg(windows)]
-    {
-        // Windows needs more time for PTY initialization
-        app::sleep(0.1);
-        // Flush any initial output
-        let mut temp_buf = [0u8; 1024];
-        let _ = reader.read(&mut temp_buf);
-    }
+    
+    app::sleep(0.1);
 
     let thread_handle = thread::spawn({
         move || {

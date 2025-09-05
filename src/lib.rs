@@ -183,11 +183,11 @@ impl PPTerm {
         let mut scroll =
             group::Scroll::new(x, y, w, h, label).with_type(group::ScrollType::Vertical);
         scroll.set_id("term_group");
-        let buffer = Arc::new(Mutex::new(CellBuffer::new(max_lines)));
+        let buffer = Arc::new(Mutex::new(CellBuffer::new(max_lines, Color::from_rgb(0, 0, 0), Color::from_rgb(255, 255, 255))));
         let mut canvas = TermCanvas::new(scroll.x(), scroll.y(), w, h, None);
         canvas.set_id("term");
         canvas.set_buffer(buffer.clone());
-        canvas.set_scroll(scroll.clone());
+        canvas.set_scroll(scroll.clone()); 
         canvas.start_blink(0.6);
         canvas.end();
         let mut m = menu::MenuButton::default()

@@ -12,7 +12,7 @@ pub struct CellsPerformer<'a> {
 
 impl<'a> CellsPerformer<'a> {
     pub fn new(buf: &'a mut CellBuffer) -> Self {
-        let cur_style = Style::default();
+        let cur_style = Style::new(buf.default_bg, buf.default_fg);
         Self {
             buf,
             cur_style,
@@ -141,7 +141,7 @@ impl Perform for CellsPerformer<'_> {
             'm' => {
                 // SGR
                 if params.is_empty() {
-                    self.cur_style = Style::default();
+                    self.cur_style = Style::new(self.buf.default_bg, self.buf.default_fg);
                     self.buf.set_style(self.cur_style);
                     return;
                 }
@@ -150,7 +150,7 @@ impl Perform for CellsPerformer<'_> {
                     let n = p[0];
                     match n {
                         0 => {
-                            self.cur_style = Style::default();
+                            self.cur_style = Style::new(self.buf.default_bg, self.buf.default_fg);
                             self.fg_base = None;
                             self.bg_base = None;
                         }

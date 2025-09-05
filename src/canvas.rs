@@ -26,10 +26,11 @@ impl TermCanvas {
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
         let mut f = group::Group::new(x, y, w, h, label);
         f.set_frame(FrameType::FlatBox);
-
+        let default_bg = Color::from_rgb(0, 0, 0);
+        let default_fg = Color::from_rgb(255, 255, 255);
         Self {
             f,
-            buffer: Arc::new(Mutex::new(CellBuffer::new(2000))),
+            buffer: Arc::new(Mutex::new(CellBuffer::new(2000, default_bg, default_fg))),
             scroll: None,
             blink: Arc::new(Mutex::new(true)),
             selection: Arc::new(Mutex::new(Selection::default())),
@@ -86,6 +87,8 @@ impl TermCanvas {
             };
 
             if let Ok(buf) = buffer.lock() {
+                draw::set_draw_color(buf.default_bg);
+                draw::draw_rectf(x, y, w, h);
                 let mut vline_idx: usize = 0;
                 for line in buf.snapshot().iter() {
                     // wrap-aware iteration
@@ -127,7 +130,7 @@ impl TermCanvas {
                         }
                         if *xx == x + pad_x {
                             // clear whole visual line background at start of segment
-                            draw::set_draw_color(Color::from_rgb(0, 0, 0));
+                            draw::set_draw_color(buf.default_bg);
                             draw::draw_rectf(x + pad_x, yy - line_h, w - 2 * pad_x, line_h);
                         }
                         let (tw, _th) = draw::measure(run, false);
@@ -243,7 +246,7 @@ impl TermCanvas {
                     }
                     if total_cols == 0 {
                         // clear empty visual line
-                        draw::set_draw_color(Color::from_rgb(0, 0, 0));
+                        draw::set_draw_color(buf.default_bg);
                         draw::draw_rectf(x + pad_x, yy - line_h, w - 2 * pad_x, line_h);
                         yy += line_h;
                         vline_idx += 1;
@@ -273,7 +276,7 @@ impl TermCanvas {
                         let cx = x + pad_x + col * ((draw::width("M") as f32).ceil() as i32);
                         let cy = y + line_h + (before_lines + seg) * line_h;
                         if cy - line_h >= y && cy <= y + h {
-                            draw::set_draw_color(Color::from_rgb(255, 255, 255));
+                            draw::set_draw_color(buf.default_fg);
                             draw::draw_rectf(
                                 cx,
                                 cy - line_h,

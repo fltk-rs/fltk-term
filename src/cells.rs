@@ -29,6 +29,22 @@ impl Default for Style {
     }
 }
 
+impl Style {
+    pub fn new(bg: Color, fg: Color) -> Self {
+        Self {
+            fg,
+            bg,
+            bold: false,
+            faint: false,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+            overline: false,
+            inverse: false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Cell {
     pub ch: char,
@@ -44,7 +60,9 @@ impl Cell {
 pub struct CellBuffer {
     lines: Vec<Vec<Cell>>, // simple grow-only buffer for now
     pub max_lines: usize,
-    cur_style: Style,
+    pub cur_style: Style,
+    pub default_bg: Color,
+    pub default_fg: Color,
     dirty_start: Option<usize>,
     dirty_end: Option<usize>,
     dirty_cols: Vec<Option<(usize, usize)>>,
@@ -55,11 +73,17 @@ pub struct CellBuffer {
 }
 
 impl CellBuffer {
-    pub fn new(max_lines: usize) -> Self {
+    pub fn new(max_lines: usize, default_bg: Color, default_fg: Color) -> Self {
         Self {
             lines: vec![Vec::new()],
             max_lines,
-            cur_style: Style::default(),
+            cur_style: Style {
+                fg: default_fg,
+                bg: default_bg,
+                ..Default::default()
+            },
+            default_bg,
+            default_fg,
             dirty_start: None,
             dirty_end: None,
             dirty_cols: vec![None],

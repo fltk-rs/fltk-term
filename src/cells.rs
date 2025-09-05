@@ -16,8 +16,8 @@ pub struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
-            fg: Color::White,
-            bg: Color::Black,
+            fg: Color::from_rgb(255, 255, 255),
+            bg: Color::from_rgb(0, 0, 0),
             bold: false,
             faint: false,
             italic: false,
@@ -144,10 +144,10 @@ impl CellBuffer {
     }
 
     fn screen_bottom(&self) -> usize {
-        self.lines
-            .len()
-            .saturating_sub(1)
-            .max(self.screen_top().saturating_add(self.rows.saturating_sub(1)))
+        self.lines.len().saturating_sub(1).max(
+            self.screen_top()
+                .saturating_add(self.rows.saturating_sub(1)),
+        )
     }
 
     fn mark_dirty_line(&mut self, idx: usize) {
@@ -495,11 +495,7 @@ impl CellBuffer {
             self.ensure_col(self.cursor_row, next.saturating_sub(1));
             // mark dirty area
             self.mark_dirty_line(self.cursor_row);
-            self.mark_dirty_cols(
-                self.cursor_row,
-                self.cursor_col,
-                next.saturating_sub(1),
-            );
+            self.mark_dirty_cols(self.cursor_row, self.cursor_col, next.saturating_sub(1));
             self.cursor_col = next;
         }
     }

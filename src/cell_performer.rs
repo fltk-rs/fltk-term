@@ -24,14 +24,14 @@ impl<'a> CellsPerformer<'a> {
 
 fn fg_from_code(code: u16) -> Option<Color> {
     match code {
-        30 => Some(Color::Black),
-        31 => Some(Color::Red),
-        32 => Some(Color::Green),
-        33 => Some(Color::Yellow),
-        34 => Some(Color::Blue),
-        35 => Some(Color::Magenta),
-        36 => Some(Color::Cyan),
-        37 => Some(Color::White),
+        30 => Some(Color::from_hex(0x000000)),
+        31 => Some(Color::from_hex(0xFF0000)),
+        32 => Some(Color::from_hex(0x00FF00)),
+        33 => Some(Color::from_hex(0xFFFF00)),
+        34 => Some(Color::from_hex(0x0000FF)),
+        35 => Some(Color::from_hex(0xFF00FF)),
+        36 => Some(Color::from_hex(0x00FFFF)),
+        37 => Some(Color::from_hex(0xFFFFFF)),
         // Bright variants (90-97)
         90 => Some(Color::from_rgb(85, 85, 85)),
         91 => Some(Color::from_rgb(255, 85, 85)),
@@ -47,14 +47,14 @@ fn fg_from_code(code: u16) -> Option<Color> {
 
 fn bg_from_code(code: u16) -> Option<Color> {
     match code {
-        40 => Some(Color::Black),
-        41 => Some(Color::Red),
-        42 => Some(Color::Green),
-        43 => Some(Color::Yellow),
-        44 => Some(Color::Blue),
-        45 => Some(Color::Magenta),
-        46 => Some(Color::Cyan),
-        47 => Some(Color::White),
+        40 => Some(Color::from_hex(0x000000)),
+        41 => Some(Color::from_hex(0xFF0000)),
+        42 => Some(Color::from_hex(0x00FF00)),
+        43 => Some(Color::from_hex(0xFFFF00)),
+        44 => Some(Color::from_hex(0x0000FF)),
+        45 => Some(Color::from_hex(0xFF00FF)),
+        46 => Some(Color::from_hex(0x00FFFF)),
+        47 => Some(Color::from_hex(0xFFFFFF)),
         // Bright variants (100-107)
         100 => Some(Color::from_rgb(85, 85, 85)),
         101 => Some(Color::from_rgb(255, 85, 85)),
@@ -99,7 +99,7 @@ fn xterm256_to_color(idx: u16) -> Color {
             let c = shade as u8;
             Color::from_rgb(c, c, c)
         }
-        _ => Color::White,
+        _ => Color::from_rgb(255, 255, 255),
     }
 }
 
@@ -224,7 +224,7 @@ impl Perform for CellsPerformer<'_> {
                             }
                         }
                         39 => {
-                            self.cur_style.fg = Color::White;
+                            self.cur_style.fg = Color::from_rgb(255, 255, 255);
                             self.fg_base = None;
                         }
                         40..=47 => {
@@ -240,7 +240,7 @@ impl Perform for CellsPerformer<'_> {
                             }
                         }
                         49 => {
-                            self.cur_style.bg = Color::Black;
+                            self.cur_style.bg = Color::from_rgb(0, 0, 0);
                             self.bg_base = None;
                         }
                         38 => {

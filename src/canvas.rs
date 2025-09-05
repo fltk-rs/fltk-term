@@ -25,35 +25,7 @@ pub struct TermCanvas {
 impl TermCanvas {
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
         let mut f = group::Group::new(x, y, w, h, label);
-        f.set_color(Color::Black);
         f.set_frame(FrameType::FlatBox);
-
-        f.draw(|f| {
-            let x = f.x();
-            let y = f.y();
-            let w = f.w();
-            let h = f.h();
-
-            // Background
-            draw::set_draw_color(Color::Black);
-            draw::draw_rect_fill(x, y, w, h, Color::Black);
-
-            draw::set_font(Font::Courier, 14);
-            let line_h = 16; // rough line height
-            let pad_x = 6;
-            let mut yy = y + line_h;
-
-            // If there is a buffer attached, render it; else, draw placeholder lines
-            // If buffer is attached later via set_buffer, draw closure will be rebound.
-
-            // Fallback placeholder when no buffer is attached
-            draw::set_draw_color(Color::White);
-            for i in 0..50 {
-                let s = format!("canvas placeholder line {}", i);
-                draw::draw_text2(&s, x + pad_x, yy - 2, w - 12, line_h, Align::Left);
-                yy += line_h;
-            }
-        });
 
         Self {
             f,
@@ -83,8 +55,8 @@ impl TermCanvas {
             let w = f.w();
             let h = f.h();
 
-            draw::set_draw_color(Color::Black);
-            draw::draw_rect_fill(x, y, w, h, Color::Black);
+            draw::set_draw_color(Color::from_rgb(0, 0, 0));
+            draw::draw_rectf(x, y, w, h);
             let mut font = Font::Courier;
             let font_size = 14;
             draw::set_font(font, font_size);
@@ -120,14 +92,14 @@ impl TermCanvas {
                     let total_cols = line.len() as i32;
                     let mut col_used = 0i32;
                     let mut run: String = String::new();
-                    let mut cur_fg = Color::White;
-                    let mut cur_bg = Color::Black;
+                    let mut cur_fg = Color::from_rgb(255, 255, 255);
+                    let mut cur_bg = Color::from_rgb(0, 0, 0);
                     let mut cur_bold = false;
                     let mut cur_underline = false;
                     let mut first = true;
                     let mut xx = x + pad_x;
                     let mut run_start_col: i32 = 0; // visual column where current run starts
-                    // draw selection outline for this visual line
+                                                    // draw selection outline for this visual line
                     if let Some(((ls, cs), (le, ce))) = sel {
                         if vline_idx >= ls && vline_idx <= le {
                             let start_col = if vline_idx == ls { cs as i32 } else { 0 };
@@ -155,17 +127,13 @@ impl TermCanvas {
                         }
                         if *xx == x + pad_x {
                             // clear whole visual line background at start of segment
-                            draw::draw_rect_fill(
-                                x + pad_x,
-                                yy - line_h,
-                                w - 2 * pad_x,
-                                line_h,
-                                Color::Black,
-                            );
+                            draw::set_draw_color(Color::from_rgb(0, 0, 0));
+                            draw::draw_rectf(x + pad_x, yy - line_h, w - 2 * pad_x, line_h);
                         }
                         let (tw, _th) = draw::measure(run, false);
                         // background for this run
-                        draw::draw_rect_fill(*xx, yy - line_h, tw, line_h, bg);
+                        draw::set_draw_color(bg);
+                        draw::draw_rectf(*xx, yy - line_h, tw, line_h);
                         // selection overlay (behind text)
                         if let Some(((ls, cs), (le, ce))) = sel {
                             if vline >= ls && vline <= le {
@@ -178,13 +146,7 @@ impl TermCanvas {
                                     let sx = x + pad_x + overlap_start * char_w;
                                     let sw = (overlap_end - overlap_start + 1) * char_w;
                                     draw::set_draw_color(Color::from_rgb(30, 80, 160));
-                                    draw::draw_rect_fill(
-                                        sx,
-                                        yy - line_h,
-                                        sw,
-                                        line_h,
-                                        Color::from_rgb(30, 80, 160),
-                                    );
+                                    draw::draw_rectf(sx, yy - line_h, sw, line_h);
                                 }
                             }
                         }
@@ -194,7 +156,6 @@ impl TermCanvas {
                         } else {
                             Font::Courier
                         };
-                        draw::set_font(font, font_size);
                         draw::set_draw_color(fg);
                         draw::draw_text2(run, *xx, yy - line_h, w - *xx, line_h, Align::Left);
                         if underline {
@@ -282,13 +243,8 @@ impl TermCanvas {
                     }
                     if total_cols == 0 {
                         // clear empty visual line
-                        draw::draw_rect_fill(
-                            x + pad_x,
-                            yy - line_h,
-                            w - 2 * pad_x,
-                            line_h,
-                            Color::Black,
-                        );
+                        draw::set_draw_color(Color::from_rgb(0, 0, 0));
+                        draw::draw_rectf(x + pad_x, yy - line_h, w - 2 * pad_x, line_h);
                         yy += line_h;
                         vline_idx += 1;
                     } else if total_cols % cols != 0 {
@@ -317,13 +273,12 @@ impl TermCanvas {
                         let cx = x + pad_x + col * ((draw::width("M") as f32).ceil() as i32);
                         let cy = y + line_h + (before_lines + seg) * line_h;
                         if cy - line_h >= y && cy <= y + h {
-                            draw::set_draw_color(Color::White);
-                            draw::draw_rect_fill(
+                            draw::set_draw_color(Color::from_rgb(255, 255, 255));
+                            draw::draw_rectf(
                                 cx,
                                 cy - line_h,
                                 (draw::width("M") as f32).ceil() as i32,
                                 line_h,
-                                Color::White,
                             );
                         }
                     }
@@ -332,12 +287,7 @@ impl TermCanvas {
             }
 
             // Fallback
-            draw::set_draw_color(Color::White);
-            for i in 0..50 {
-                let s = format!("canvas placeholder line {}", i);
-                draw::draw_text2(&s, x + pad_x, yy - line_h, w - 12, line_h, Align::Left);
-                yy += line_h;
-            }
+            draw::set_draw_color(Color::from_rgb(255, 255, 255));
         });
     }
 
@@ -361,7 +311,6 @@ impl TermCanvas {
     }
 
     fn mouse_to_vpos(&self, x: i32, y: i32) -> (usize, usize) {
-        draw::set_font(Font::Courier, 14);
         let line_h = draw::height().max(14);
         let char_w = ((draw::width("M") as f32).ceil() as i32).max(1);
         let pad_x = 6;
@@ -399,8 +348,6 @@ impl TermCanvas {
         let buf_arc = self.buffer.clone();
         if let Ok(buf) = buf_arc.lock() {
             let snap = buf.snapshot();
-            draw::set_font(Font::Courier, 14);
-            // let line_h = draw::height().max(14);
             let char_w = ((draw::width("M") as f32).ceil() as i32).max(1);
             let pad_x = 6;
             let cols = ((self.f.w() - 2 * pad_x).max(1) / char_w).max(1) as usize;

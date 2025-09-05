@@ -16,6 +16,7 @@ mod canvas;
 pub mod cell_performer;
 mod cells;
 mod pty;
+mod styles;
 
 pub use canvas::TermCanvas;
 pub use cells::{Cell, CellBuffer, Style};
@@ -74,7 +75,6 @@ fn copy_selection_to_clipboard(
                 std::mem::swap(&mut a, &mut b);
             }
             if let Ok(buf) = buffer.lock() {
-                draw::set_font(Font::Courier, 14);
                 let pad_x = 6;
                 let char_w = ((draw::width("M") as f32).ceil() as i32).max(1);
                 let cols = ((widget_width - 2 * pad_x).max(1) / char_w).max(1) as usize;
@@ -183,7 +183,6 @@ impl PPTerm {
         let mut scroll =
             group::Scroll::new(x, y, w, h, label).with_type(group::ScrollType::Vertical);
         scroll.set_id("term_group");
-        scroll.set_color(Color::Black);
         let buffer = Arc::new(Mutex::new(CellBuffer::new(max_lines)));
         let mut canvas = TermCanvas::new(scroll.x(), scroll.y(), w, h, None);
         canvas.set_id("term");
@@ -249,7 +248,6 @@ impl PPTerm {
                             t.take_focus().ok();
                             let (mx, my) = (app::event_x(), app::event_y());
                             // begin selection (account for scroll viewport + offset)
-                            draw::set_font(enums::Font::Courier, 14);
                             let line_h = draw::height().max(14);
                             let char_w = ((draw::width("M") as f32).ceil() as i32).max(1);
                             let pad_x = 6;
@@ -293,9 +291,15 @@ impl PPTerm {
                         let arrow_with_mods = |letter: u8| -> Vec<u8> {
                             let mut v = Vec::new();
                             let mut m = 1; // base
-                            if has_shift { m += 1; } // 2
-                            if has_alt { m += 2; }   // 3
-                            if has_ctrl { m += 4; }  // 5
+                            if has_shift {
+                                m += 1;
+                            } // 2
+                            if has_alt {
+                                m += 2;
+                            } // 3
+                            if has_ctrl {
+                                m += 4;
+                            } // 5
                             if m == 1 {
                                 v.extend_from_slice(&[0x1b, b'[', letter]);
                             } else {
@@ -312,30 +316,98 @@ impl PPTerm {
                                     let _ = w.write_all(b"\x7f");
                                 }
                             }
-                            Key::Up => { let seq = if has_shift || has_alt || has_ctrl { arrow_with_mods(b'A') } else { UP.to_vec() }; send(&seq); }
-                            Key::Down => { let seq = if has_shift || has_alt || has_ctrl { arrow_with_mods(b'B') } else { DOWN.to_vec() }; send(&seq); }
-                            Key::Left => { let seq = arrow_with_mods(b'D'); send(&seq); }
-                            Key::Right => { let seq = arrow_with_mods(b'C'); send(&seq); }
+                            Key::Up => {
+                                let seq = if has_shift || has_alt || has_ctrl {
+                                    arrow_with_mods(b'A')
+                                } else {
+                                    UP.to_vec()
+                                };
+                                send(&seq);
+                            }
+                            Key::Down => {
+                                let seq = if has_shift || has_alt || has_ctrl {
+                                    arrow_with_mods(b'B')
+                                } else {
+                                    DOWN.to_vec()
+                                };
+                                send(&seq);
+                            }
+                            Key::Left => {
+                                let seq = arrow_with_mods(b'D');
+                                send(&seq);
+                            }
+                            Key::Right => {
+                                let seq = arrow_with_mods(b'C');
+                                send(&seq);
+                            }
                             // Prefer VT220-style for unmodified; many shells expect 1~/4~
-                            Key::Home => { if has_shift || has_alt || has_ctrl { let seq = arrow_with_mods(b'H'); send(&seq); } else { send(b"\x1b[1~"); } }
-                            Key::End => { if has_shift || has_alt || has_ctrl { let seq = arrow_with_mods(b'F'); send(&seq); } else { send(b"\x1b[4~"); } }
-                            Key::PageUp => { send(b"\x1b[5~"); }
-                            Key::PageDown => { send(b"\x1b[6~"); }
-                            Key::Insert => { send(b"\x1b[2~"); }
-                            Key::Delete => { send(b"\x1b[3~"); }
-                            Key::Enter => { send(b"\r"); }
-                            Key::F1 => { send(b"\x1bOP"); }
-                            Key::F2 => { send(b"\x1bOQ"); }
-                            Key::F3 => { send(b"\x1bOR"); }
-                            Key::F4 => { send(b"\x1bOS"); }
-                            Key::F5 => { send(b"\x1b[15~"); }
-                            Key::F6 => { send(b"\x1b[17~"); }
-                            Key::F7 => { send(b"\x1b[18~"); }
-                            Key::F8 => { send(b"\x1b[19~"); }
-                            Key::F9 => { send(b"\x1b[20~"); }
-                            Key::F10 => { send(b"\x1b[21~"); }
-                            Key::F11 => { send(b"\x1b[23~"); }
-                            Key::F12 => { send(b"\x1b[24~"); }
+                            Key::Home => {
+                                if has_shift || has_alt || has_ctrl {
+                                    let seq = arrow_with_mods(b'H');
+                                    send(&seq);
+                                } else {
+                                    send(b"\x1b[1~");
+                                }
+                            }
+                            Key::End => {
+                                if has_shift || has_alt || has_ctrl {
+                                    let seq = arrow_with_mods(b'F');
+                                    send(&seq);
+                                } else {
+                                    send(b"\x1b[4~");
+                                }
+                            }
+                            Key::PageUp => {
+                                send(b"\x1b[5~");
+                            }
+                            Key::PageDown => {
+                                send(b"\x1b[6~");
+                            }
+                            Key::Insert => {
+                                send(b"\x1b[2~");
+                            }
+                            Key::Delete => {
+                                send(b"\x1b[3~");
+                            }
+                            Key::Enter => {
+                                send(b"\r");
+                            }
+                            Key::F1 => {
+                                send(b"\x1bOP");
+                            }
+                            Key::F2 => {
+                                send(b"\x1bOQ");
+                            }
+                            Key::F3 => {
+                                send(b"\x1bOR");
+                            }
+                            Key::F4 => {
+                                send(b"\x1bOS");
+                            }
+                            Key::F5 => {
+                                send(b"\x1b[15~");
+                            }
+                            Key::F6 => {
+                                send(b"\x1b[17~");
+                            }
+                            Key::F7 => {
+                                send(b"\x1b[18~");
+                            }
+                            Key::F8 => {
+                                send(b"\x1b[19~");
+                            }
+                            Key::F9 => {
+                                send(b"\x1b[20~");
+                            }
+                            Key::F10 => {
+                                send(b"\x1b[21~");
+                            }
+                            Key::F11 => {
+                                send(b"\x1b[23~");
+                            }
+                            Key::F12 => {
+                                send(b"\x1b[24~");
+                            }
                             _ => {
                                 let txt = app::event_text();
                                 if !txt.is_empty() {
@@ -350,7 +422,6 @@ impl PPTerm {
                     Event::Drag => {
                         let (mx, my) = (app::event_x(), app::event_y());
                         // Update selection end (account for scroll viewport + offset)
-                        draw::set_font(enums::Font::Courier, 14);
                         let line_h = draw::height().max(14);
                         let char_w = ((draw::width("M") as f32).ceil() as i32).max(1);
                         let pad_x = 6;
@@ -364,8 +435,8 @@ impl PPTerm {
                         }
                         // Auto-scroll during selection when dragging beyond the widget edges
                         let edge = 14; // px threshold
-                        // Monospace line height
-                        // line_h computed above
+                                       // Monospace line height
+                                       // line_h computed above
                         let mut new_y = scroll_for_input.yposition();
                         // Use viewport edges to decide scroll
                         let vt = scroll_for_input.y();
@@ -632,7 +703,6 @@ impl Drop for PPTerm {
 fltk::widget_extends!(PPTerm, group::Scroll, scroll);
 
 fn canvas_sel_mouse_to_vpos(t: &group::Group, mx: i32, my: i32) -> (usize, usize) {
-    draw::set_font(enums::Font::Courier, 14);
     let line_h = draw::height().max(14);
     let char_w = ((draw::width("M") as f32).ceil() as i32).max(1);
     let pad_x = 6;

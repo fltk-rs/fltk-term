@@ -1,5 +1,5 @@
-use fltk_term::PPTerm;
 use fltk::{prelude::*, *};
+use fltk_term::PPTerm;
 
 fn main() {
     let a = app::App::default();
@@ -9,9 +9,10 @@ fn main() {
     w.show();
 
     // app::add_timeout3(0.2, move |_| {
-        // Test the original command that should show red text
-        term.write_all(r#"echo -e "\033[1;31mHELLO""#.as_bytes()).unwrap();
-        term.write_all(b"\n").unwrap();
+    // Test the original command that should show red text
+    term.write_all(r#"echo -e "\033[1;31mHELLO""#.as_bytes())
+        .unwrap();
+    term.write_all(b"\n").unwrap();
     // });
 
     a.run().unwrap();

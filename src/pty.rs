@@ -99,21 +99,19 @@ pub(crate) fn start(
                         }
                         app::awake();
                     }
-                    Err(e) => {
-                        match e.kind() {
-                            std::io::ErrorKind::WouldBlock => {
-                                app::sleep(0.01);
-                            }
-                            std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe => {
-                                break;
-                            }
-                            _ => {
-                                #[cfg(feature = "debug-term")]
-                                eprintln!("PTY read error: {}", e);
-                                app::sleep(0.01);
-                            }
+                    Err(e) => match e.kind() {
+                        std::io::ErrorKind::WouldBlock => {
+                            app::sleep(0.01);
                         }
-                    }
+                        std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe => {
+                            break;
+                        }
+                        _ => {
+                            #[cfg(feature = "debug-term")]
+                            eprintln!("PTY read error: {}", e);
+                            app::sleep(0.01);
+                        }
+                    },
                 }
                 app::sleep(0.03);
             }

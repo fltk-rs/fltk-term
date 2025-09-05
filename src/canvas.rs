@@ -1,4 +1,5 @@
 use crate::cells::CellBuffer;
+use crate::styles::*;
 use fltk::app;
 use fltk::{
     draw,
@@ -26,8 +27,8 @@ impl TermCanvas {
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
         let mut f = group::Group::new(x, y, w, h, label);
         f.set_frame(FrameType::FlatBox);
-        let default_bg = Color::from_rgb(0, 0, 0);
-        let default_fg = Color::from_rgb(255, 255, 255);
+        let default_bg = BLACK;
+        let default_fg = WHITE;
         Self {
             f,
             buffer: Arc::new(Mutex::new(CellBuffer::new(2000, default_bg, default_fg))),
@@ -56,7 +57,7 @@ impl TermCanvas {
             let w = f.w();
             let h = f.h();
 
-            draw::set_draw_color(Color::from_rgb(0, 0, 0));
+            draw::set_draw_color(BLACK);
             draw::draw_rectf(x, y, w, h);
             let mut font = Font::Courier;
             let font_size = 14;
@@ -95,8 +96,8 @@ impl TermCanvas {
                     let total_cols = line.len() as i32;
                     let mut col_used = 0i32;
                     let mut run: String = String::new();
-                    let mut cur_fg = Color::from_rgb(255, 255, 255);
-                    let mut cur_bg = Color::from_rgb(0, 0, 0);
+                    let mut cur_fg = WHITE;
+                    let mut cur_bg = BLACK;
                     let mut cur_bold = false;
                     let mut cur_underline = false;
                     let mut first = true;
@@ -110,7 +111,7 @@ impl TermCanvas {
                             if end_col >= start_col {
                                 let sx = x + pad_x + start_col * char_w;
                                 let sw = (end_col - start_col + 1) * char_w;
-                                draw::set_draw_color(Color::from_rgb(60, 90, 160));
+                                draw::set_draw_color(BLUE);
                                 draw::draw_rect(sx, yy - line_h, sw, line_h);
                             }
                         }
@@ -148,7 +149,7 @@ impl TermCanvas {
                                 if overlap_end >= overlap_start {
                                     let sx = x + pad_x + overlap_start * char_w;
                                     let sw = (overlap_end - overlap_start + 1) * char_w;
-                                    draw::set_draw_color(Color::from_rgb(30, 80, 160));
+                                    draw::set_draw_color(BLUE);
                                     draw::draw_rectf(sx, yy - line_h, sw, line_h);
                                 }
                             }
@@ -290,7 +291,7 @@ impl TermCanvas {
             }
 
             // Fallback
-            draw::set_draw_color(Color::from_rgb(255, 255, 255));
+            draw::set_draw_color(WHITE);
         });
     }
 

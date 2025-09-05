@@ -1,3 +1,4 @@
+use crate::styles::*;
 use fltk::enums::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,8 +17,8 @@ pub struct Style {
 impl Default for Style {
     fn default() -> Self {
         Self {
-            fg: Color::from_rgb(255, 255, 255),
-            bg: Color::from_rgb(0, 0, 0),
+            fg: WHITE,
+            bg: BLACK,
             bold: false,
             faint: false,
             italic: false,

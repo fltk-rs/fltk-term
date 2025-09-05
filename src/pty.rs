@@ -64,7 +64,7 @@ pub(crate) fn start(
     std::mem::forget(pair.slave);
 
     let mut statemachine = Parser::new();
-    
+
     app::sleep(0.1);
 
     let thread_handle = thread::spawn({

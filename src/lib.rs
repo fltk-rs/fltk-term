@@ -4,6 +4,7 @@
 #![allow(clippy::needless_doctest_main)]
 
 use fltk::{enums::*, prelude::*, *};
+use std::cell::Cell as StdCell;
 use std::{
     io::{self, Write},
     str,
@@ -502,62 +503,73 @@ impl PPTerm {
         let last_vlines = Arc::new(Mutex::new(0usize));
         let last_vlines_cl = last_vlines.clone();
         let auto_follow_flag_cl = auto_follow_flag.clone();
-        app::add_timeout3(0.05, move |h| {
-            // Desired content height based on buffer lines and dirty region extraction
-            let mut _had_dirty = false;
-            let (line_count, _, _) = if let Ok(mut buf) = buffer_clone.lock() {
-                let snap = buf.snapshot();
-                let cols = ((canvas_clone.w() - 12).max(char_w) / char_w).max(1) as usize;
-                let mut vlines = 0usize;
-                for line in snap.iter() {
-                    let len = line.len().max(1);
-                    vlines += len.div_ceil(cols); // ceil div
-                }
-                // Compute dirty rectangles from per-line column ranges
-                let mut dirty = Vec::new();
-                for (li, cs, ce) in buf.take_dirty_areas() {
-                    if li >= snap.len() {
-                        continue;
-                    }
-                    let line = &snap[li];
-                    let len = line.len();
-                    let cs = cs.min(len);
-                    let ce = ce.min(len.saturating_sub(1));
-                    // visual rows before this line
-                    let vis_before = snap
-                        .iter()
-                        .take(li)
-                        .map(|l| l.len().max(1).div_ceil(cols))
-                        .sum::<usize>();
-                    let start_seg = cs / cols;
-                    let end_seg = (ce / cols).max(start_seg);
-                    let y = (vis_before + start_seg) as i32 * line_h + 2;
-                    let hrect = ((end_seg - start_seg + 1) as i32 * line_h).max(line_h);
-                    let start_col = (cs % cols) as i32;
-                    let end_col = ((ce % cols) as i32).max(start_col);
-                    let x = 6 + start_col * char_w;
-                    let w = ((end_col - start_col + 1) * char_w).max(char_w);
-                    dirty.push((x, y, w, hrect));
-                }
-                if !dirty.is_empty() {
-                    _had_dirty = true;
-                }
-                (vlines, cols as u16, Some(dirty))
-            } else {
-                (0usize, 80u16, None)
-            };
-            let pad_y = 4;
-            let desired_h = (line_count as i32 * line_h + pad_y).max(scroll_clone.h());
-            // Resize canvas content to match buffer
-            canvas_clone.set_size(scroll_clone.w(), desired_h);
 
-            // Compute cols/rows from viewport size (NOT content height) and resize PTY
+        // Track previous geometry to avoid redundant work
+        let prev_cols = StdCell::new(0u16);
+        let prev_rows = StdCell::new(0u16);
+        let prev_h = StdCell::new(0i32);
+
+        // Adaptive timer: fast on updates, slow when idle
+        app::add_timeout3(0.05, move |h| {
+            // If terminal group is not visible, back off
+            if !scroll_clone.visible() {
+                app::repeat_timeout3(0.5, h);
+                return;
+            }
+
+            // Compute viewport-based cols/rows first
             let pad_x = 6;
+            let pad_y = 4;
+            let cols_vis = ((canvas_clone.w() - 12).max(char_w) / char_w).max(1) as usize;
             let cols = ((scroll_clone.w() - 2 * pad_x).max(char_w) / char_w).max(10) as u16;
             let rows = ((scroll_clone.h() - pad_y).max(line_h) / line_h).max(3) as u16;
-            if let Some(ref pty) = master_pty_clone {
-                let _ = pty::resize_pty(pty, cols, rows);
+
+            // Decide whether we need to inspect buffer content in detail
+            let dims_changed = cols != prev_cols.get() || rows != prev_rows.get();
+
+            // Desired content height based on buffer lines (avoid full recompute when idle)
+            let mut had_dirty = false;
+            let line_count: usize = if let Ok(mut buf) = buffer_clone.lock() {
+                // Check if buffer reports any dirty areas; only then do expensive accounting
+                let dirty_areas = buf.take_dirty_areas();
+                had_dirty = !dirty_areas.is_empty();
+
+                if had_dirty || dims_changed || prev_h.get() == 0 {
+                    let snap = buf.snapshot();
+                    let mut vlines = 0usize;
+                    for line in snap.iter() {
+                        let len = line.len().max(1);
+                        vlines += len.div_ceil(cols_vis); // ceil div
+                    }
+                    vlines
+                } else {
+                    // No content change and no geometry change: reuse last vlines
+                    *last_vlines_cl.lock().unwrap()
+                }
+            } else {
+                0usize
+            };
+
+            let desired_h = (line_count as i32 * line_h + pad_y).max(scroll_clone.h());
+
+            // Resize canvas content to match buffer only if height changed
+            let mut changed = false;
+            if desired_h != prev_h.get() {
+                canvas_clone.set_size(scroll_clone.w(), desired_h);
+                prev_h.set(desired_h);
+                changed = true;
             }
+
+            // Resize PTY only when grid changes
+            if cols != prev_cols.get() || rows != prev_rows.get() {
+                if let Some(ref pty) = master_pty_clone {
+                    let _ = pty::resize_pty(pty, cols, rows);
+                }
+                prev_cols.set(cols);
+                prev_rows.set(rows);
+                changed = true;
+            }
+
             // Keep buffer aware of the terminal grid size for CUP/ED/EL semantics
             if let Ok(mut buf) = buffer_clone.lock() {
                 buf.set_dimensions(cols as usize, rows as usize);
@@ -572,7 +584,6 @@ impl PPTerm {
                     }
                     *prev = line_count;
                 }
-                // Also follow on in-place updates (e.g., CR progress) by watching dirty flags
                 if new_output {
                     let view_h = scroll_clone.h();
                     let max_y = (canvas_clone.h() - view_h).max(0);
@@ -580,9 +591,14 @@ impl PPTerm {
                 }
             }
 
-            // For correctness, prefer full redraw; dirty rects available for future optimization.
-            canvas_clone.redraw();
-            app::repeat_timeout3(0.05, h);
+            // Redraw only on dirty output or geometry change
+            let next = if had_dirty || changed {
+                canvas_clone.redraw();
+                0.05
+            } else {
+                0.05
+            };
+            app::repeat_timeout3(next, h);
         });
 
         Self {

@@ -14,13 +14,16 @@ use fltk::{prelude::*, *};
 fn main() {
     let a = app::App::default();
     let mut w = window::Window::default().with_size(600, 400);
-    let term = PPTerm::default().size_of_parent();
+    // Defer PTY start until after window sizing to avoid truncated first prompt
+    let mut term = PPTerm::new_deferred(0, 0, 0, 0, None).size_of_parent();
     w.end();
     w.show();
 
+    // Start the PTY now that the widget has a real size
+    term.start();
+
     app::add_timeout3(0.2, move |_| {
-        term.write_all(r#"echo -e "\033[1;31mHELLO""#.as_bytes()).unwrap();
-        term.write_all(b"\n").unwrap();
+        term.write_all(b"echo -e \"\x1b[1;31mHELLO\"\n").unwrap();
     });
 
     a.run().unwrap();

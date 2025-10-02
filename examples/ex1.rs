@@ -4,16 +4,18 @@ use fltk_term::PPTerm;
 fn main() {
     let a = app::App::default();
     let mut w = window::Window::default().with_size(600, 400);
-    let term = PPTerm::default().size_of_parent();
+    // Defer PTY start until after window sizing
+    let mut term = PPTerm::new_deferred(0, 0, 0, 0, None).size_of_parent();
     w.end();
     w.show();
 
-    // app::add_timeout3(0.2, move |_| {
+    // Start the PTY with correct initial cols/rows
+    term.start();
+
     // Test the original command that should show red text
-    term.write_all(r#"echo -e "\033[1;31mHELLO""#.as_bytes())
+    term
+        .write_all(b"echo -e \"\x1b[1;31mHELLO\"\n")
         .unwrap();
-    term.write_all(b"\n").unwrap();
-    // });
 
     a.run().unwrap();
 }

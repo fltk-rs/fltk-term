@@ -4,6 +4,7 @@
 #![allow(clippy::needless_doctest_main)]
 
 use fltk::{enums::*, prelude::*, *};
+use portable_pty::MasterPty;
 use std::cell::Cell as StdCell;
 use std::{
     io::{self, Write},
@@ -161,6 +162,9 @@ pub struct PPTerm {
     cols: u16,
     rows: u16,
     auto_follow: Arc<Mutex<bool>>,
+    // Shared handles used by event/timer closures; populated once PTY starts
+    shared_writer: Arc<Mutex<Option<Arc<Mutex<Box<dyn Write + Send>>>>>>,
+    shared_master: Arc<Mutex<Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>>>,
 }
 
 impl Default for PPTerm {
@@ -181,6 +185,7 @@ impl PPTerm {
         init_cols: u16,
         init_rows: u16,
         max_lines: usize,
+        defer_start: bool,
     ) -> Self {
         let mut scroll =
             group::Scroll::new(x, y, w, h, label).with_type(group::ScrollType::Vertical);
@@ -205,20 +210,51 @@ impl PPTerm {
         let char_w = (sw as f32 / 10.0).ceil() as i32;
         let line_h = sh.max(14);
 
-        // Calculate actual cols/rows from window dimensions to avoid race condition
+        // Calculate initial cols/rows for the PTY. If the widget hasn't been
+        // laid out yet (w/h == 0), fall back to the provided init cols/rows to
+        // avoid starting the shell with a tiny grid that can truncate/wrap the
+        // first printed prompt.
         let pad_x = 6;
         let pad_y = 4;
-        let actual_cols = ((w - 2 * pad_x).max(char_w) / char_w).max(10) as u16;
-        let actual_rows = ((h - pad_y).max(line_h) / line_h).max(3) as u16;
+        let actual_cols = if w > 0 {
+            ((w - 2 * pad_x).max(char_w) / char_w).max(10) as u16
+        } else {
+            init_cols.max(10)
+        };
+        let actual_rows = if h > 0 {
+            ((h - pad_y).max(line_h) / line_h).max(3) as u16
+        } else {
+            init_rows.max(3)
+        };
 
         let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let handles = pty::start(buffer.clone(), actual_cols, actual_rows, shutdown_flag.clone());
-        let master_pty_arc_opt = handles.as_ref().map(|h| h.master_pty.clone());
+        // Shared handles used by event/timer closures; can be populated later via start()
+        let shared_writer: Arc<Mutex<Option<Arc<Mutex<Box<dyn Write + Send>>>>>> =
+            Arc::new(Mutex::new(None));
+        let shared_master: Arc<Mutex<Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>>> =
+            Arc::new(Mutex::new(None));
+
+        // Optionally start immediately (default behavior) or defer until start() is called.
+        let handles = if !defer_start {
+            let h = pty::start(
+                buffer.clone(),
+                actual_cols,
+                actual_rows,
+                shutdown_flag.clone(),
+            );
+            if let Some(ref hh) = h {
+                *shared_writer.lock().unwrap() = Some(hh.writer.clone());
+                *shared_master.lock().unwrap() = Some(hh.master_pty.clone());
+            }
+            h
+        } else {
+            None
+        };
 
         // React to outer widget resize: update canvas width and PTY cols/rows
         scroll.resize_callback({
             let mut canvas = canvas.clone();
-            let master_pty_cb = master_pty_arc_opt.clone();
+            let shared_master_cb = shared_master.clone();
             let mut menu = m.clone();
             move |_, x, y, w, h| {
                 // Important: don't call scroll.resize() here to avoid recursive callbacks.
@@ -229,18 +265,19 @@ impl PPTerm {
                 let pad_y = 4;
                 let cols = ((w - 2 * pad_x).max(char_w) / char_w).max(10) as u16;
                 let rows = ((h - pad_y).max(line_h) / line_h).max(3) as u16;
-                if let Some(ref pty) = master_pty_cb {
+                if let Some(ref pty) = *shared_master_cb.lock().unwrap() {
                     let _ = pty::resize_pty(pty, cols, rows);
                 }
             }
         });
 
-        // Keyboard input -> PTY
-        if let Some(ref handles_ref) = handles {
+        // Keyboard input -> PTY (works whether PTY is started now or deferred)
+        {
             let selection_arc = canvas.selection_handle();
             let buffer_for_copy = buffer.clone();
             let mut scroll_for_input = scroll.clone();
             let canvas_for_input = canvas.clone();
+            let shared_writer_ev = shared_writer.clone();
             canvas.set_callback({
                 let sel_arc = selection_arc.clone();
                 let buf = buffer.clone();
@@ -249,7 +286,6 @@ impl PPTerm {
                 }
             });
             canvas.handle({
-                let writer = handles_ref.writer.clone();
                 move |t, ev| match ev {
                     Event::Push => {
                         if app::event_button() == 1 {
@@ -289,11 +325,13 @@ impl PPTerm {
                         let has_alt = mods.contains(EventState::Alt);
                         let has_ctrl = mods.contains(EventState::Ctrl);
                         let send = |bytes: &[u8]| {
-                            if let Ok(mut w) = writer.lock() {
-                                if has_alt {
-                                    let _ = w.write_all(b"\x1b"); // Alt prefix
+                            if let Some(ref wr_arc) = *shared_writer_ev.lock().unwrap() {
+                                if let Ok(mut w) = wr_arc.lock() {
+                                    if has_alt {
+                                        let _ = w.write_all(b"\x1b"); // Alt prefix
+                                    }
+                                    let _ = w.write_all(bytes);
                                 }
-                                let _ = w.write_all(bytes);
                             }
                         };
                         let arrow_with_mods = |letter: u8| -> Vec<u8> {
@@ -320,8 +358,10 @@ impl PPTerm {
                         match key {
                             #[cfg(windows)]
                             Key::BackSpace => {
-                                if let Ok(mut w) = writer.lock() {
-                                    let _ = w.write_all(b"\x7f");
+                                if let Some(ref wr_arc) = *shared_writer_ev.lock().unwrap() {
+                                    if let Ok(mut w) = wr_arc.lock() {
+                                        let _ = w.write_all(b"\x7f");
+                                    }
                                 }
                             }
                             Key::Up => {
@@ -485,8 +525,10 @@ impl PPTerm {
                             pasted = app::event_text();
                         }
                         if !pasted.is_empty() {
-                            if let Ok(mut w) = writer.lock() {
-                                let _ = w.write_all(pasted.as_bytes());
+                            if let Some(ref wr_arc) = *shared_writer_ev.lock().unwrap() {
+                                if let Ok(mut w) = wr_arc.lock() {
+                                    let _ = w.write_all(pasted.as_bytes());
+                                }
                             }
                         }
                         // Auto-scroll after paste
@@ -503,7 +545,7 @@ impl PPTerm {
         // Periodic layout + resize updater
         let mut canvas_clone = canvas.clone();
         let buffer_clone = buffer.clone();
-        let master_pty_clone = master_pty_arc_opt.clone();
+        let shared_master_cl = shared_master.clone();
         let mut scroll_clone = scroll.clone();
         let auto_follow_flag = Arc::new(Mutex::new(true));
         let last_vlines = Arc::new(Mutex::new(0usize));
@@ -568,7 +610,7 @@ impl PPTerm {
 
             // Resize PTY only when grid changes
             if cols != prev_cols.get() || rows != prev_rows.get() {
-                if let Some(ref pty) = master_pty_clone {
+                if let Some(ref pty) = *shared_master_cl.lock().unwrap() {
                     let _ = pty::resize_pty(pty, cols, rows);
                 }
                 prev_cols.set(cols);
@@ -616,12 +658,14 @@ impl PPTerm {
             cols: init_cols,
             rows: init_rows,
             auto_follow: auto_follow_flag,
+            shared_writer: shared_writer.clone(),
+            shared_master: shared_master.clone(),
         }
     }
 
     /// Create a new canvas terminal with default dimensions (80x24).
     pub fn new<L: Into<Option<&'static str>>>(x: i32, y: i32, w: i32, h: i32, label: L) -> Self {
-        Self::new_with_cols_rows_internal(x, y, w, h, label, 80, 24, 2000)
+        Self::new_with_cols_rows_internal(x, y, w, h, label, 80, 24, 2000, false)
     }
 
     /// Create a new canvas terminal with explicit terminal dimensions (cols x rows).
@@ -634,18 +678,97 @@ impl PPTerm {
         cols: u16,
         rows: u16,
     ) -> Self {
-        Self::new_with_cols_rows_internal(x, y, w, h, label, cols, rows, 2000)
+        Self::new_with_cols_rows_internal(x, y, w, h, label, cols, rows, 2000, false)
     }
 
     /// Convenience: construct with only (cols, rows). Position/size can be
     /// set later via standard FLTK `WidgetExt` methods like `size_of_parent()`.
     pub fn with_dimensions(cols: u16, rows: u16) -> Self {
-        Self::new_with_cols_rows_internal(0, 0, 0, 0, None, cols, rows, 2000)
+        Self::new_with_cols_rows_internal(0, 0, 0, 0, None, cols, rows, 2000, false)
     }
 
     /// Convenience: construct with (cols, rows, scrollback_lines).
     pub fn with_dimensions_and_scrollback(cols: u16, rows: u16, scrollback_lines: usize) -> Self {
-        Self::new_with_cols_rows_internal(0, 0, 0, 0, None, cols, rows, scrollback_lines)
+        Self::new_with_cols_rows_internal(0, 0, 0, 0, None, cols, rows, scrollback_lines, false)
+    }
+
+    /// Construct without starting the PTY; call `start()` after the window
+    /// has been shown and sized for correct initial geometry.
+    pub fn new_deferred<L: Into<Option<&'static str>>>(
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        label: L,
+    ) -> Self {
+        Self::new_with_cols_rows_internal(x, y, w, h, label, 80, 24, 2000, true)
+    }
+
+    /// Construct with explicit dimensions but defer PTY start until `start()`.
+    pub fn new_with_dims_deferred<L: Into<Option<&'static str>>>(
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        label: L,
+        cols: u16,
+        rows: u16,
+    ) -> Self {
+        Self::new_with_cols_rows_internal(x, y, w, h, label, cols, rows, 2000, true)
+    }
+
+    /// Convenience deferred constructors
+    pub fn with_dimensions_deferred(cols: u16, rows: u16) -> Self {
+        Self::new_with_cols_rows_internal(0, 0, 0, 0, None, cols, rows, 2000, true)
+    }
+
+    pub fn with_dimensions_and_scrollback_deferred(
+        cols: u16,
+        rows: u16,
+        scrollback_lines: usize,
+    ) -> Self {
+        Self::new_with_cols_rows_internal(0, 0, 0, 0, None, cols, rows, scrollback_lines, true)
+    }
+
+    /// Start the underlying PTY if it hasn't been started. Compute grid from
+    /// the current widget size so the shell starts at the correct width.
+    pub fn start(&mut self) {
+        if self.pty.is_some() {
+            return;
+        }
+
+        // Recompute monospace metrics
+        draw::set_font(Font::Courier, 14);
+        let sample = "MMMMMMMMMM";
+        let (sw, sh) = draw::measure(sample, false);
+        let char_w = (sw as f32 / 10.0).ceil() as i32;
+        let line_h = sh.max(14);
+        let pad_x = 6;
+        let pad_y = 4;
+        let w = self.scroll.w();
+        let h = self.scroll.h();
+        let cols = if w > 0 {
+            ((w - 2 * pad_x).max(char_w) / char_w).max(10) as u16
+        } else {
+            self.cols.max(10)
+        };
+        let rows = if h > 0 {
+            ((h - pad_y).max(line_h) / line_h).max(3) as u16
+        } else {
+            self.rows.max(3)
+        };
+
+        let handles = pty::start(
+            self.buffer.clone(),
+            cols,
+            rows,
+            self.shutdown_flag.clone(),
+        );
+        if let Some(ref h) = handles {
+            *self.shared_writer.lock().unwrap() = Some(h.writer.clone());
+            *self.shared_master.lock().unwrap() = Some(h.master_pty.clone());
+        }
+        self.pty = handles;
     }
 
     pub fn widget(&self) -> &group::Scroll {

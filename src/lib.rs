@@ -205,8 +205,14 @@ impl PPTerm {
         let char_w = (sw as f32 / 10.0).ceil() as i32;
         let line_h = sh.max(14);
 
+        // Calculate actual cols/rows from window dimensions to avoid race condition
+        let pad_x = 6;
+        let pad_y = 4;
+        let actual_cols = ((w - 2 * pad_x).max(char_w) / char_w).max(10) as u16;
+        let actual_rows = ((h - pad_y).max(line_h) / line_h).max(3) as u16;
+
         let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let handles = pty::start(buffer.clone(), init_cols, init_rows, shutdown_flag.clone());
+        let handles = pty::start(buffer.clone(), actual_cols, actual_rows, shutdown_flag.clone());
         let master_pty_arc_opt = handles.as_ref().map(|h| h.master_pty.clone());
 
         // React to outer widget resize: update canvas width and PTY cols/rows

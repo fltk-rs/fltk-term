@@ -1,6 +1,6 @@
 [package]
 name = "fltk-term"
-version = "0.1.4"
+version = "0.2.3"
 edition = "2021"
 description = "A minimal terminal widget for fltk"
 repository = "https://github.com/fltk-rs/fltk-term"
@@ -12,8 +12,8 @@ license = "MIT"
 
 [dependencies]
 portable-pty =  "0.8"
-fltk = { version = "1.5", optional = true }
-fltk2 = { version = "0.1", optional = true }
+vte =  "0.12.0"
+fltk = "1.5.14"
 
 [features]
 default = ["fltk"]

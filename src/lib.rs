@@ -6,8 +6,7 @@
 use fltk::{enums::*, prelude::*, *};
 use std::cell::Cell as StdCell;
 use std::{
-    env,
-    io::{self, Read, Write},
+    io::{self, Write},
     str,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -163,6 +162,7 @@ pub struct PPTerm {
     rows: u16,
     auto_follow: Arc<Mutex<bool>>,
 }
+
 impl Default for PPTerm {
     fn default() -> Self {
         PPTerm::new(0, 0, 0, 0, None)
@@ -228,16 +228,6 @@ impl PPTerm {
                 }
             }
         });
-        // Terminal handles many common ansi escape sequence
-        st.set_ansi(true);
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                cols: 120,
-                rows: 16,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
 
         // Keyboard input -> PTY
         if let Some(ref handles_ref) = handles {
@@ -474,7 +464,7 @@ impl PPTerm {
                         } else if app::event_button() == 3 {
                             m.popup();
                         }
-                        app::sleep(0.03);
+                        true
                     }
                     Event::Paste => {
                         // Prefer event_clipboard() for portability; fallback to event_text()
